@@ -1,0 +1,33 @@
+# Ignore the virtual environment
+venv/
+__pycache__/
+
+# Ignore the logs
+*.log
+*.log.*
+
+# Ignore the build output
+dist/
+build/
+
+# Ignore the .env file
+.env
+
+# Ignore the IDE-specific files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Ignore the compiled files
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+
+# Ignore the test and linting files
+*.pytest_cache/
+.coverage
+.tox/
+.nox/
+.hypothesis/

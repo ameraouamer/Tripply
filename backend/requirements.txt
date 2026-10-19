@@ -1,0 +1,27 @@
+# API server
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+httpx
+requests
+psycopg2-binary
+sqlalchemy
+alembic
+# LangChain and LangGraph
+langchain
+langchain-core
+langchain-community
+langchain-text-splitters
+langgraph
+# LLM provider integrations
+langchain-openai
+langchain-google-genai
+# Logging and debugging
+logging
+# Testing and linting
+pytest
+flake8
+black
+# Other
+python-multipart
