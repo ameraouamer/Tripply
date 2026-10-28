@@ -6,7 +6,7 @@ from app.schemas.common import Money
 # pyrefly: ignore [missing-import]
 from app.schemas.flights import FlightOption
 # pyrefly: ignore [missing-import]
-from app.schemas.hotels import HotelOption
+from app.schemas.Hotels import HotelOption
 # pyrefly: ignore [missing-import]
 from app.schemas.activities import Activity
 

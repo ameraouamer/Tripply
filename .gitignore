@@ -31,3 +31,5 @@ build/
 .tox/
 .nox/
 .hypothesis/
+
+.venv/

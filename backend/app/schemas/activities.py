@@ -33,8 +33,6 @@ class Activity(BaseModel):
     category: ActivityCategory
     description: str
     location: str
-    latitude: float | None = None
-    longitude: float | None = None
     duration_minutes: int = Field(gt=0)
     price: Money | None = None
     opening_hours: str | None = None

@@ -40,8 +40,6 @@ class HotelOption(BaseModel):
     amenities: list[str] = Field(default_factory=list)
     distance_to_center_km: float | None = None
     free_cancellation: bool = False
-    pros: list[str] = Field(default_factory=list)
-    cons: list[str] = Field(default_factory=list)
 
 
 class HotelSearchOutput(BaseModel):

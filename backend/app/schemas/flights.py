@@ -42,9 +42,6 @@ class FlightOption(BaseModel):
     total_duration_minutes: int
     stops: int
     cabin: CabinClass
-    pros: list[str] = Field(default_factory=list)
-    cons: list[str] = Field(default_factory=list)
-
 
 class FlightSearchOutput(BaseModel):
     options: list[FlightOption]
