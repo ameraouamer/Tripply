@@ -2,15 +2,14 @@ import operator
 from pydantic import BaseModel, Field
 from enum import Enum
 from app.schemas.common import Priority , Money 
-from flights import CabinClass, FlightSearchInput, FlightSearchOutput
-from Hotels import HotelSearchInput, HotelSearchOutput
+from app.schemas.flights import CabinClass, FlightSearchInput, FlightSearchOutput
+from backend.app.schemas.accomodation import HotelSearchInput, HotelSearchOutput
 from itinerary import Itinerary, ItineraryInput
 from datetime import date
 from typing import Annotated
 from activities import (
     ActivityCategory, ActivitySearchInput, ActivitySearchOutput,
 )
-
 
 class TripRequest(BaseModel):
     """What the user asks for. The planner turns this into per-agent inputs."""

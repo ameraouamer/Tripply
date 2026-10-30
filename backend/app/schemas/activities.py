@@ -1,5 +1,4 @@
 """Activities agent: discover activities and attractions."""
-from datetime import time
 from enum import Enum
 from pydantic import BaseModel, Field
 # pyrefly: ignore [missing-import]

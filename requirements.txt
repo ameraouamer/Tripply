@@ -17,8 +17,6 @@ langgraph
 # LLM provider integrations
 langchain-openai
 langchain-google-genai
-# Logging and debugging
-logging
 # Testing and linting
 pytest
 flake8

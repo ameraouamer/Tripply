@@ -6,7 +6,7 @@ from app.schemas.common import Money
 # pyrefly: ignore [missing-import]
 from app.schemas.flights import FlightOption
 # pyrefly: ignore [missing-import]
-from app.schemas.Hotels import HotelOption
+from backend.app.schemas.accomodation import HotelOption
 # pyrefly: ignore [missing-import]
 from app.schemas.activities import Activity
 
@@ -20,6 +20,7 @@ class ItineraryInput(BaseModel):
     activities: list[Activity] = Field(default_factory=list)
     pace: str = "balanced"
     total_budget: Money | None = None
+    travelers: int = Field(default=1, ge=1)
 
 
 class ItineraryItem(BaseModel):

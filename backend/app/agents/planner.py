@@ -17,7 +17,7 @@ from langgraph.graph import END, START, StateGraph
 from app.schemas.activities import ActivitySearchInput, ActivitySearchOutput
 from app.schemas.common import Money
 from app.schemas.flights import FlightSearchInput, FlightSearchOutput
-from app.schemas.Hotels import HotelSearchInput, HotelSearchOutput
+from backend.app.schemas.accomodation import HotelSearchInput, HotelSearchOutput
 from app.schemas.itinerary import Itinerary, ItineraryInput
 from app.schemas.planner import AgentError, Stage, TripRequest, TripState
 
@@ -108,15 +108,15 @@ def build_graph(agents: Agents, retries: int = 1):
 
     async def flights(state: TripState) -> dict:
         result, error = await _call("flights", agents.flights, state.flight_query, retries)
-        return {"flights": result} if result else {"errors": [error]}
+        return {"flights": result} if error is None  else {"errors": [error]}
 
     async def hotels(state: TripState) -> dict:
         result, error = await _call("hotels", agents.hotels, state.hotel_query, retries)
-        return {"hotels": result} if result else {"errors": [error]}
+        return {"hotels": result} if error is None else {"errors": [error]}
 
     async def activities(state: TripState) -> dict:
         result, error = await _call("activities", agents.activities, state.activity_query, retries)
-        return {"activities": result} if result else {"errors": [error]}
+        return {"activities": result} if error is None else {"errors": [error]}
 
     def collect(state: TripState) -> dict:
         """Join point: runs once all three search nodes have finished."""
@@ -152,12 +152,12 @@ def build_graph(agents: Agents, retries: int = 1):
 
     # --- wiring ------------------------------------------------------------ #
     g = StateGraph(TripState)
-    g.add_node("plan", plan)
-    g.add_node("flights", flights)
-    g.add_node("hotels", hotels)
-    g.add_node("activities", activities)
-    g.add_node("collect", collect)
-    g.add_node("itinerary", itinerary)
+    g.add_node("plan_all", plan)
+    g.add_node("flights_agent", flights)
+    g.add_node("hotels_agent", hotels)
+    g.add_node("activities_agent", activities)
+    g.add_node("collect_data", collect)
+    g.add_node("itinerary_loop", itinerary)
 
     g.add_edge(START, "plan")
     g.add_conditional_edges("plan", after_plan, ["flights", "hotels", "activities", END])
