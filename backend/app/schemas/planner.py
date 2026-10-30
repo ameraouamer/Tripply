@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from enum import Enum
 from app.schemas.common import Priority , Money 
 from app.schemas.flights import CabinClass, FlightSearchInput, FlightSearchOutput
-from backend.app.schemas.accomodation import HotelSearchInput, HotelSearchOutput
+from app.schemas.accomodation import HotelSearchInput, HotelSearchOutput
 from itinerary import Itinerary, ItineraryInput
 from datetime import date
 from typing import Annotated

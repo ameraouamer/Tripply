@@ -1,29 +1,24 @@
 """Planner: turns a TripRequest into agent queries, runs the agents, and hands
 their results to the itinerary agent. Schemas live in app/schemas/planner.py.
 
-Flow:
-    START -> plan -> [flights | hotels | activities]  (parallel)
-                          -> collect -> itinerary -> END
-    Any stage can short-circuit to END with stage=FAILED.
-
 Each agent is injected as an async callable (typed input -> typed output), so the
 graph can be tested with fakes and the agents stay independent of this file.
 """
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-
+import inspect
 from langgraph.graph import END, START, StateGraph
-
-from app.schemas.activities import ActivitySearchInput, ActivitySearchOutput
+import asyncio
+from app.schemas.activities import Activity, ActivitySearchInput, ActivitySearchOutput
 from app.schemas.common import Money
 from app.schemas.flights import FlightSearchInput, FlightSearchOutput
-from backend.app.schemas.accomodation import HotelSearchInput, HotelSearchOutput
+from app.schemas.accomodation import HotelSearchInput, HotelSearchOutput
 from app.schemas.itinerary import Itinerary, ItineraryInput
 from app.schemas.planner import AgentError, Stage, TripRequest, TripState
 
-# --------------------------------------------------------------------------- #
+
 # Agent interface
-# --------------------------------------------------------------------------- #
+
 @dataclass(frozen=True)
 class Agents:
     flights: Callable[[FlightSearchInput], Awaitable[FlightSearchOutput]]
@@ -34,6 +29,11 @@ class Agents:
 
 # Share of the total budget given to each agent. Tune freely.
 BUDGET_SPLIT = {"flights": 0.35, "hotels": 0.40, "activities": 0.25}
+
+# Max activities handed to the itinerary agent, per day, by pace.
+ACTIVITIES_PER_DAY = {"relaxed": 2, "balanced": 3, "packed": 5}
+
+SEARCH_NODES = ["search_flights", "search_hotels", "search_activities"]
 
 
 def _share(budget: Money | None, key: str, divisor: int = 1) -> Money | None:
@@ -51,20 +51,49 @@ def _pick(options: list, recommended_id: str):
     return options[0] if options else None
 
 
+def _select_activities(
+    out: ActivitySearchOutput | None, num_days: int, pace: str
+) -> list[Activity]:
+    """The itinerary agent must schedule EVERY activity it gets, so trim here:
+    all must-dos first, then best-rated, capped by pace * days."""
+    if out is None:
+        return []
+    must_ids = set(out.must_do_ids)
+    must = [a for a in out.activities if a.id in must_ids]
+    rest = sorted(
+        (a for a in out.activities if a.id not in must_ids),
+        key=lambda a: a.rating or 0,
+        reverse=True,
+    )
+    cap = ACTIVITIES_PER_DAY.get(pace, 3) * num_days
+    return (must + rest)[: max(cap, len(must))]
+
+
+async def _run(fn, arg):
+    """Await async agents; run sync (blocking) agents in a worker thread."""
+    is_async = inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(
+        getattr(fn, "__call__", None)   # callable objects like ItineraryAgent
+    )
+    return await fn(arg) if is_async else await asyncio.to_thread(fn, arg)
+
+
 async def _call(name: str, fn, arg, retries: int):
     """Run an agent, retrying on failure. Returns (result, error)."""
     last: Exception | None = None
     for _ in range(retries + 1):
         try:
-            return await fn(arg), None
+            return await _run(fn, arg), None
         except Exception as exc:  # noqa: BLE001 - one failing agent must not kill the run
             last = exc
     return None, AgentError(agent=name, message=f"{type(last).__name__}: {last}")
 
-
-# --------------------------------------------------------------------------- #
 # Graph
-# --------------------------------------------------------------------------- #
+#
+#   START -> plan --(ok)--> search_flights    --\
+#              |            search_hotels     ---+--> itinerary -> END
+#              |            search_activities --/
+#              +--(failed)-> END
+
 def build_graph(agents: Agents, retries: int = 1):
     # --- nodes ------------------------------------------------------------- #
     def plan(state: TripState) -> dict:
@@ -106,63 +135,64 @@ def build_graph(agents: Agents, retries: int = 1):
             ),
         }
 
-    async def flights(state: TripState) -> dict:
-        result, error = await _call("flights", agents.flights, state.flight_query, retries)
-        return {"flights": result} if error is None  else {"errors": [error]}
+    async def search_flights(state: TripState) -> dict:
+        out, err = await _call("flights", agents.flights, state.flight_query, retries)
+        return {"flights": out, "errors": [err] if err else []}
 
-    async def hotels(state: TripState) -> dict:
-        result, error = await _call("hotels", agents.hotels, state.hotel_query, retries)
-        return {"hotels": result} if error is None else {"errors": [error]}
+    async def search_hotels(state: TripState) -> dict:
+        out, err = await _call("hotels", agents.hotels, state.hotel_query, retries)
+        return {"hotels": out, "errors": [err] if err else []}
 
-    async def activities(state: TripState) -> dict:
-        result, error = await _call("activities", agents.activities, state.activity_query, retries)
-        return {"activities": result} if error is None else {"errors": [error]}
+    async def search_activities(state: TripState) -> dict:
+        out, err = await _call("activities", agents.activities, state.activity_query, retries)
+        return {"activities": out, "errors": [err] if err else []}
 
-    def collect(state: TripState) -> dict:
-        """Join point: runs once all three search nodes have finished."""
-        if state.flights or state.hotels or state.activities:
-            return {"stage": Stage.ITINERARY}
-        return {"stage": Stage.FAILED}
-
-    async def itinerary(state: TripState) -> dict:
+    async def build_itinerary(state: TripState) -> dict:
         r = state.request
-        payload = ItineraryInput(
+        if not (state.flights or state.hotels or state.activities):
+            return {
+                "stage": Stage.FAILED,
+                "errors": [AgentError(
+                    agent="planner",
+                    message="All search agents failed; nothing to build an itinerary from.",
+                )],
+            }
+
+        flight = _pick(state.flights.options, state.flights.recommended_id) if state.flights else None
+        hotel = _pick(state.hotels.options, state.hotels.recommended_id) if state.hotels else None
+        num_days = (r.end_date - r.start_date).days + 1
+
+        inp = ItineraryInput(
             destination=r.destination,
             start_date=r.start_date,
             end_date=r.end_date,
-            flight=_pick(state.flights.options, state.flights.recommended_id) if state.flights else None,
-            hotel=_pick(state.hotels.options, state.hotels.recommended_id) if state.hotels else None,
-            activities=state.activities.activities if state.activities else [],
+            flight=flight,
+            hotel=hotel,
+            activities=_select_activities(state.activities, num_days, r.pace),
             pace=r.pace,
             total_budget=r.total_budget,
+            travelers=r.travelers,
         )
-        result, error = await _call("itinerary", agents.itinerary, payload, retries)
-        if result is None:
-            return {"stage": Stage.FAILED, "errors": [error]}
-        return {"stage": Stage.DONE, "itinerary": result}
+        # retries=0: the itinerary agent already has its own generate/validate loop.
+        out, err = await _call("itinerary", agents.itinerary, inp, retries=0)
+        if err:
+            return {"stage": Stage.FAILED, "errors": [err]}
+        return {"stage": Stage.DONE, "itinerary": out}
 
-    # --- routing ----------------------------------------------------------- #
+    # --- edges ------------------------------------------------------------- #
     def after_plan(state: TripState) -> list[str]:
-        if state.stage == Stage.FAILED:
-            return [END]
-        return ["flights", "hotels", "activities"]
+        return [END] if state.stage == Stage.FAILED else SEARCH_NODES
 
-    def after_collect(state: TripState) -> str:
-        return END if state.stage == Stage.FAILED else "itinerary"
-
-    # --- wiring ------------------------------------------------------------ #
     g = StateGraph(TripState)
-    g.add_node("plan_all", plan)
-    g.add_node("flights_agent", flights)
-    g.add_node("hotels_agent", hotels)
-    g.add_node("activities_agent", activities)
-    g.add_node("collect_data", collect)
-    g.add_node("itinerary_loop", itinerary)
+    g.add_node("plan", plan)
+    g.add_node("search_flights", search_flights)
+    g.add_node("search_hotels", search_hotels)
+    g.add_node("search_activities", search_activities)
+    g.add_node("itinerary", build_itinerary)
 
     g.add_edge(START, "plan")
-    g.add_conditional_edges("plan", after_plan, ["flights", "hotels", "activities", END])
-    g.add_edge(["flights", "hotels", "activities"], "collect")  # waits for all three
-    g.add_conditional_edges("collect", after_collect, ["itinerary", END])
+    g.add_conditional_edges("plan", after_plan, SEARCH_NODES + [END])  # fan-out (parallel)
+    g.add_edge(SEARCH_NODES, "itinerary")                              # join: waits for all three
     g.add_edge("itinerary", END)
     return g.compile()
 
