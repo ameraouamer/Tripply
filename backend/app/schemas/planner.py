@@ -55,3 +55,10 @@ class TripState(BaseModel):
  
     itinerary: Itinerary | None = None
     errors: Annotated[list[AgentError], operator.add] = Field(default_factory=list)
+
+class TripResponse(BaseModel):
+    itinerary: Itinerary
+    flights: FlightSearchOutput | None = None
+    hotels: HotelSearchOutput | None = None
+    activities: ActivitySearchOutput | None = None
+    warnings: list[AgentError] = Field(default_factory=list)
