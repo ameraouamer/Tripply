@@ -105,7 +105,7 @@ Rules:
 class ActivitiesAgent:
     def __init__(self, llm: BaseChatModel | None = None) -> None:
         self._key = os.getenv("OPENTRIPMAP_API_KEY")
-        model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
         self._llm = llm or ChatGoogleGenerativeAI(model=model, temperature=0)
 
     # ------------------------------------------------------------ retrieval

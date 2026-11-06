@@ -12,7 +12,7 @@ def get_model(
     model: str | None = None,
     temperature: float = 0,
 ) -> ChatGoogleGenerativeAI:
-    model_name = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    model_name = model or os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     return ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
 
 
