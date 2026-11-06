@@ -189,7 +189,6 @@ def build_graph(agents: Agents, retries: int = 1):
     g.add_node("search_hotels", search_hotels)
     g.add_node("search_activities", search_activities)
     g.add_node("itinerary", build_itinerary)
-
     g.add_edge(START, "plan")
     g.add_conditional_edges("plan", after_plan, SEARCH_NODES + [END])  # fan-out (parallel)
     g.add_edge(SEARCH_NODES, "itinerary")                              # join: waits for all three

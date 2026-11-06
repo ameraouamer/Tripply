@@ -2,7 +2,6 @@
 from datetime import date, datetime
 from enum import Enum
 from pydantic import BaseModel, Field
-# pyrefly: ignore [missing-import]
 from app.schemas.common import Money, Priority 
 
 

@@ -1,13 +1,9 @@
 """Itinerary agent: assemble flights, hotel and activities into the final plan."""
 from datetime import date, time
 from pydantic import BaseModel, Field
-# pyrefly: ignore [missing-import]
 from app.schemas.common import Money
-# pyrefly: ignore [missing-import]
 from app.schemas.flights import FlightOption
-# pyrefly: ignore [missing-import]
 from app.schemas.accomodation import HotelOption
-# pyrefly: ignore [missing-import]
 from app.schemas.activities import Activity
 
 

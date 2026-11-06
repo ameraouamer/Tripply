@@ -12,14 +12,11 @@ Env vars
 - LITEAPI_GUEST_NATIONALITY   (optional, ISO-2, default "US") - rates can depend on it
 """
 from __future__ import annotations
-
 import asyncio
 import os
 from typing import Protocol
-
 import requests
 from dotenv import load_dotenv
-
 from app.schemas.common import Money, Priority
 from app.schemas.accomodation import (
     AccommodationType,

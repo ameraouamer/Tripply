@@ -1,16 +1,21 @@
 """
-Flights agent: fetch live offers (Amadeus) and return them in the app's own schema.
+Flights agent: fetch live offers (Ignav) and return them in the app's own schema.
+
+.env
+    IGNAV_API_KEY=...        # required (1,000 free requests, then pay as you go)
+    IGNAV_MARKET=US          # optional, 2-letter country code; decides price currency
 """
 from __future__ import annotations
+
 import os
 import re
-import time
 from datetime import datetime
+
 import requests
 from dotenv import load_dotenv
-from app.schemas.common import Money, Priority                     
+from app.schemas.common import Money, Priority
 
-from app.schemas.flights import (                                    
+from app.schemas.flights import (
     CabinClass,
     FlightOption,
     FlightSearchInput,
@@ -20,36 +25,19 @@ from app.schemas.flights import (
 
 load_dotenv()
 
-CABIN_TO_AMADEUS = {
-    CabinClass.ECONOMY: "ECONOMY",
-    CabinClass.PREMIUM_ECONOMY: "PREMIUM_ECONOMY",
-    CabinClass.BUSINESS: "BUSINESS",
-    CabinClass.FIRST: "FIRST",
-}
-
 
 class FlightsAgent:
+    BASE = "https://ignav.com/api"
+
     def __init__(self) -> None:
-        env = os.getenv("AMADEUS_ENV", "test")
-        self.base = "https://test.api.amadeus.com" if env == "test" else "https://api.amadeus.com"
-        self._id = os.environ["AMADEUS_CLIENT_ID"]
-        self._secret = os.environ["AMADEUS_CLIENT_SECRET"]
-        self._token: str | None = None
-        self._expiry = 0.0
+        self._key = os.environ["IGNAV_API_KEY"]
+        self._market = os.getenv("IGNAV_MARKET", "US")
 
     # ------------------------------------------------------------------ auth
+    @property
     def _headers(self) -> dict:
-        if not self._token or time.time() > self._expiry - 30:
-            r = requests.post(
-                f"{self.base}/v1/security/oauth2/token",
-                data={"grant_type": "client_credentials",
-                      "client_id": self._id, "client_secret": self._secret},
-                timeout=20,
-            )
-            r.raise_for_status()
-            d = r.json()
-            self._token, self._expiry = d["access_token"], time.time() + int(d["expires_in"])
-        return {"Authorization": f"Bearer {self._token}"}
+        # No OAuth flow, no token expiry: just a static header.
+        return {"X-Api-Key": self._key, "Content-Type": "application/json"}
 
     # ------------------------------------------------- city name -> IATA code
     def _resolve_iata(self, place: str) -> str:
@@ -57,67 +45,71 @@ class FlightsAgent:
         if re.fullmatch(r"[A-Za-z]{3}", place):
             return place.upper()
         r = requests.get(
-            f"{self.base}/v1/reference-data/locations",
-            headers=self._headers(),
-            params={"subType": "CITY,AIRPORT", "keyword": place, "page[limit]": 1},
+            f"{self.BASE}/airports",
+            headers=self._headers,
+            params={"q": place, "limit": 1},
             timeout=20,
         )
         r.raise_for_status()
-        data = r.json().get("data", [])
+        data = r.json()                       # a plain list: [{"code": "ALG", ...}]
         if not data:
             raise ValueError(f"Could not resolve '{place}' to an airport/city code")
-        return data[0]["iataCode"]
+        return data[0]["code"]
 
     # ---------------------------------------------------------------- fetch
-    def _fetch(self, inp: FlightSearchInput, currency: str) -> dict:
-        params = {
-            "originLocationCode": self._resolve_iata(inp.origin),
-            "destinationLocationCode": self._resolve_iata(inp.destination),
-            "departureDate": inp.departure_date.isoformat(),
+    def _fetch(self, inp: FlightSearchInput) -> dict:
+        body = {
+            "origin": self._resolve_iata(inp.origin),
+            "destination": self._resolve_iata(inp.destination),
+            "departure_date": inp.departure_date.isoformat(),
             "adults": inp.passengers,
-            "travelClass": CABIN_TO_AMADEUS[inp.cabin],
-            "currencyCode": currency,
-            "max": 50,
+            "cabin_class": inp.cabin.value,   # your enum values already match Ignav's
+            "market": self._market,
         }
+        if inp.max_stops is not None and inp.max_stops <= 2:   # Ignav accepts 0, 1 or 2
+            body["max_stops"] = inp.max_stops
+
         if inp.return_date:
-            params["returnDate"] = inp.return_date.isoformat()
-        if inp.max_stops == 0:
-            params["nonStop"] = "true"
-        r = requests.get(f"{self.base}/v2/shopping/flight-offers",
-                         headers=self._headers(), params=params, timeout=40)
+            body["return_date"] = inp.return_date.isoformat()
+            endpoint = "round-trip"
+        else:
+            endpoint = "one-way"
+
+        r = requests.post(f"{self.BASE}/fares/{endpoint}",
+                          headers=self._headers, json=body, timeout=40)
         r.raise_for_status()
         return r.json()
 
     # ---------------------------------------------------------------- parse
     @staticmethod
-    def _minutes(iso: str) -> int:
-        m = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?", iso)
-        return int(m.group(1) or 0) * 60 + int(m.group(2) or 0)
-
-    @staticmethod
-    def _segments(itinerary: dict, carriers: dict) -> list[FlightSegment]:
+    def _segments(leg: dict) -> list[FlightSegment]:
         return [
             FlightSegment(
-                airline=carriers.get(s["carrierCode"], s["carrierCode"]),
-                flight_number=f'{s["carrierCode"]}{s["number"]}',
-                origin=s["departure"]["iataCode"],
-                destination=s["arrival"]["iataCode"],
-                departure_time=datetime.fromisoformat(s["departure"]["at"]),
-                arrival_time=datetime.fromisoformat(s["arrival"]["at"]),
+                airline=s.get("operating_carrier_name") or leg.get("carrier")
+                        or s.get("marketing_carrier_code") or "Unknown",
+                flight_number=f'{s.get("marketing_carrier_code") or ""}{s.get("flight_number") or ""}',
+                origin=s["departure_airport"],
+                destination=s["arrival_airport"],
+                departure_time=datetime.fromisoformat(s["departure_time_local"]),
+                arrival_time=datetime.fromisoformat(s["arrival_time_local"]),
             )
-            for s in itinerary["segments"]
+            for s in leg["segments"]
         ]
 
-    def _to_option(self, raw: dict, carriers: dict, inp: FlightSearchInput) -> FlightOption:
-        its = raw["itineraries"]
+    @staticmethod
+    def _leg_minutes(leg: dict) -> int:
+        return leg.get("duration_minutes") or sum(s["duration_minutes"] for s in leg["segments"])
+
+    def _to_option(self, raw: dict, inp: FlightSearchInput) -> FlightOption:
+        legs = [raw["outbound"]] + ([raw["inbound"]] if raw.get("inbound") else [])
         return FlightOption(
-            id=raw["id"],
-            outbound=self._segments(its[0], carriers),
-            inbound=self._segments(its[1], carriers) if len(its) > 1 else [],
-            total_price=Money(amount=float(raw["price"]["grandTotal"]),   # <- Money fields
+            id=raw["ignav_id"],               # also the key for Ignav's booking-links endpoint
+            outbound=self._segments(raw["outbound"]),
+            inbound=self._segments(raw["inbound"]) if raw.get("inbound") else [],
+            total_price=Money(amount=float(raw["price"]["amount"]),
                               currency=raw["price"]["currency"]),
-            total_duration_minutes=sum(self._minutes(i["duration"]) for i in its),
-            stops=max(len(i["segments"]) - 1 for i in its),   # worst direction
+            total_duration_minutes=sum(self._leg_minutes(l) for l in legs),
+            stops=max(len(l["segments"]) - 1 for l in legs),   # worst direction
             cabin=inp.cabin,
         )
 
@@ -133,7 +125,7 @@ class FlightsAgent:
 
     def _rank(self, options: list[FlightOption], priority: Priority) -> list[FlightOption]:
         mode = self._mode(priority)
-        price = lambda o: o.total_price.amount                         # <- Money field
+        price = lambda o: o.total_price.amount
         if mode == "cheapest":
             return sorted(options, key=lambda o: (price(o), o.stops, o.total_duration_minutes))
         if mode == "fastest":
@@ -170,15 +162,21 @@ class FlightsAgent:
 
     # ------------------------------------------------------------ public API
     def search(self, inp: FlightSearchInput, top_n: int = 5) -> FlightSearchOutput:
-        currency = inp.max_price.currency if inp.max_price else "EUR"
-        payload = self._fetch(inp, currency)
-        carriers = payload.get("dictionaries", {}).get("carriers", {})
+        payload = self._fetch(inp)
+        options = [self._to_option(r, inp) for r in payload.get("itineraries", [])]
 
-        options = [self._to_option(r, carriers, inp) for r in payload.get("data", [])]
         if inp.max_stops is not None:
             options = [o for o in options if o.stops <= inp.max_stops]
-        if inp.max_price is not None:
-            options = [o for o in options if o.total_price.amount <= inp.max_price.amount]
+
+        # Ignav prices in the market's currency (no currency parameter), so a
+        # budget in another currency can't be compared without FX: skip it and say so.
+        note = ""
+        if inp.max_price is not None and options:
+            if options[0].total_price.currency == inp.max_price.currency:
+                options = [o for o in options if o.total_price.amount <= inp.max_price.amount]
+            else:
+                note = (f" Note: budget is in {inp.max_price.currency} but prices are in "
+                        f"{options[0].total_price.currency}; max price was not applied.")
 
         if not options:
             return FlightSearchOutput(
@@ -201,11 +199,12 @@ class FlightsAgent:
             f"{best.stops} stop(s). Cheapest overall: "
             f"{cheapest.total_price.amount:.0f} {cheapest.total_price.currency} "
             f"({cheapest.stops} stop(s), {cheapest.total_duration_minutes // 60}h"
-            f"{cheapest.total_duration_minutes % 60:02d})."
+            f"{cheapest.total_duration_minutes % 60:02d})." + note
         )
         return FlightSearchOutput(options=top, recommended_id=best.id, comparison_summary=summary)
 
-     ## test 
+
+## test
 if __name__ == "__main__":
     from datetime import date
     out = FlightsAgent().search(FlightSearchInput(

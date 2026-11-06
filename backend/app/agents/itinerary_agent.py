@@ -10,7 +10,6 @@ Itinerary agent: the LLM drafts the plan, code fixes the numbers and validates i
 * check    : deterministic. Recomputes costs, sorts items, then validates.
 * route    : the conditional edge that makes the loop agentic.
 """
-
 import logging
 from datetime import date, datetime, time, timedelta
 from typing import TypedDict
@@ -19,8 +18,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from app.schemas.common import Money
 from app.schemas.itinerary import Itinerary, ItineraryInput
-
-
 
 
 log = logging.getLogger(__name__)

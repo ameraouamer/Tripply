@@ -4,10 +4,10 @@ from enum import Enum
 from app.schemas.common import Priority , Money 
 from app.schemas.flights import CabinClass, FlightSearchInput, FlightSearchOutput
 from app.schemas.accomodation import HotelSearchInput, HotelSearchOutput
-from itinerary import Itinerary, ItineraryInput
+from app.schemas.itinerary import Itinerary, ItineraryInput
 from datetime import date
 from typing import Annotated
-from activities import (
+from app.schemas.activities import (
     ActivityCategory, ActivitySearchInput, ActivitySearchOutput,
 )
 

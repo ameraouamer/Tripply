@@ -10,16 +10,16 @@ Without OPENTRIPMAP_API_KEY it falls back to LLM-generated activities,
 clearly flagged as unverified in `notes`.
 """
 from __future__ import annotations
-
 import asyncio
 import logging
 import os
 from dataclasses import dataclass
 from typing import Literal
-
 import httpx
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 
 from app.schemas.activities import (
@@ -103,11 +103,10 @@ Rules:
 
 
 class ActivitiesAgent:
-    def __init__(self, llm: ChatOpenAI | None = None) -> None:
+    def __init__(self, llm: BaseChatModel | None = None) -> None:
         self._key = os.getenv("OPENTRIPMAP_API_KEY")
-        self._llm = llm or ChatOpenAI(
-            model=os.getenv("ACTIVITIES_LLM_MODEL", "gpt-4o-mini"), temperature=0
-        )
+        model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self._llm = llm or ChatGoogleGenerativeAI(model=model, temperature=0)
 
     # ------------------------------------------------------------ retrieval
     async def _geocode(self, http: httpx.AsyncClient, place: str) -> tuple[float, float]:
@@ -239,8 +238,8 @@ class ActivitiesAgent:
         )
         chain = self._llm.with_structured_output(Selection)
         return await chain.ainvoke([
-            ("system", system),
-            ("human", f"Interests: {[i.value for i in (inp.interests or DEFAULT_INTERESTS)]}\n\nCandidates:\n{lines}"),
+            SystemMessage(content=system),
+            HumanMessage(content=f"Interests: {[i.value for i in (inp.interests or DEFAULT_INTERESTS)]}\n\nCandidates:\n{lines}"),
         ])
 
     # ------------------------------------------------ fallback: no data source
@@ -248,11 +247,15 @@ class ActivitiesAgent:
         n = PER_DAY.get(inp.pace.lower(), 3) * inp.num_days + EXTRA_PICKS
         chain = self._llm.with_structured_output(GeneratedList)
         out: GeneratedList = await chain.ainvoke([
-            ("system", "You suggest well-known, real attractions only. If unsure a place exists, leave it out. "
-                       "Never state opening hours or prices."),
-            ("human", f"Suggest {n} activities in {inp.destination} for interests "
-                      f"{[i.value for i in inp.interests] or 'any'}, {inp.pace} pace, "
-                      f"accessibility needs: {inp.accessibility_needs or 'none'}."),
+            SystemMessage(
+                content="You suggest well-known, real attractions only. If unsure a place exists, leave it out. "
+                        "Never state opening hours or prices."
+            ),
+            HumanMessage(
+                content=f"Suggest {n} activities in {inp.destination} for interests "
+                        f"{[i.value for i in inp.interests] or 'any'}, {inp.pace} pace, "
+                        f"accessibility needs: {inp.accessibility_needs or 'none'}."
+            ),
         ])
         acts = [Activity(id=f"llm-{i}", **a.model_dump()) for i, a in enumerate(out.activities, 1)]
         return ActivitySearchOutput(

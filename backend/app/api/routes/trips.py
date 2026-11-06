@@ -1,4 +1,3 @@
-# app/api/routes/trips.py
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.agents.planner import Agents, plan_trip
